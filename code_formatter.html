@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Code Formatter</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+      textarea {
+        width: 100%;
+        height: 200px;
+        margin-bottom: 10px;
+      }
+      button {
+        padding: 10px 20px;
+        font-size: 16px;
+        margin-right: 10px;
+        margin-bottom: 10px;
+      }
+      #functionOptions {
+        display: none;
+        margin-top: 20px;
+      }
+      #functionOptions button {
+        display: block;
+        margin-bottom: 10px;
+        .tab {
+          overflow: hidden;
+          border: 1px solid #ccc;
+          background-color: #f1f1f1;
+          margin-bottom: 20px;
+        }
+        .tab button {
+          background-color: inherit;
+          float: left;
+          border: none;
+          outline: none;
+          cursor: pointer;
+          padding: 14px 16px;
+          transition: 0.3s;
+        }
+        .tab button:hover {
+          background-color: #ddd;
+        }
+        .tab button.active {
+          background-color: #f9f9f9;
+        }
+      }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/js-beautify/1.15.1/beautify.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/js-beautify/1.15.1/beautify-css.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/js-beautify/1.15.1/beautify-html.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/prettier@2.8.8/standalone.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/prettier@2.8.8/parser-html.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/prettier@2.8.8/parser-babel.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/prettier@2.8.8/parser-postcss.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/acorn/8.7.1/acorn.min.js"></script>
+  </head>
+  <body>
+    <div class="tab">
+      <button
+        class="tablinks active"
+        onclick="location.href='code_formatter.html'"
+      >
+        Code Formatter
+      </button>
+      <button class="tablinks" onclick="location.href='function_replacer.html'">
+        Function Replacer
+      </button>
+      <button class="tablinks" onclick="location.href='text_comparison.html'">
+        Text Comparison
+      </button>
+    </div>
+
+    <h1>Code Formatter</h1>
+
+    <h2>Original Code</h2>
+    <textarea
+      id="originalCode"
+      placeholder="Paste your original code here..."
+    ></textarea>
+
+    <div class="checkbox-group">
+      <label>
+        <input type="checkbox" id="removeComments" /> Remove all comments (does
+        not work with regex)
+      </label>
+      <br />
+      <label>
+        <input type="checkbox" id="removeEmptyLines" /> Remove all empty new
+        lines
+      </label>
+      <br />
+      <label>
+        <input type="checkbox" id="removeLineBreaks" /> Remove all line breaks
+      </label>
+      <label>
+        <br />
+        <input type="checkbox" id="addProperLineBreaks" /> Format code/json
+        (remove comments first)
+      </label>
+    </div>
+    <br />
+    <button onclick="clearTextarea('originalCode')">Clear</button>
+
+    <button onclick="processCode()">Process Code</button>
+
+    <h2>Result</h2>
+    <textarea id="result" readonly></textarea>
+    <button onclick="copyToClipboard()">Copy to Clipboard</button>
+    <button onclick="copyToOriginal()">Copy to Original</button>
+    <button onclick="clearTextarea('result')">Clear</button>
+
+    <script>
+      function processCode() {
+        let code = document.getElementById("originalCode").value;
+        if (document.getElementById("removeComments").checked) {
+          code = removeComments(code);
+        }
+        if (document.getElementById("removeEmptyLines").checked) {
+          code = removeEmptyLines(code);
+        }
+        if (document.getElementById("removeLineBreaks").checked) {
+          code = removeLineBreaks(code);
+        }
+        if (document.getElementById("addProperLineBreaks").checked) {
+          if (isValidJSON(code)) {
+            code = formatJSON(code);
+          } else {
+            code = formatCombinedCode(code);
+          }
+        }
+        document.getElementById("result").value = code;
+      }
+
+      function formatCombinedCode(code) {
+        if (isValidJSON(code)) {
+          try {
+            return prettier.format(code, {
+              parser: "json",
+              plugins: prettierPlugins,
+              printWidth: 80,
+              tabWidth: 2,
+              useTabs: false,
+            });
+          } catch (error) {
+            console.error("Prettier JSON formatting failed:", error);
+            return formatJSON(code); // Fallback to basic JSON formatting
+          }
+        }
+        const options = {
+          indent_size: 2,
+          wrap_line_length: 0,
+          preserve_newlines: true,
+          keep_array_indentation: true,
+          end_with_newline: true,
+        };
+
+        function escapeRegExp(string) {
+          return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        }
+
+        function tokenize(code) {
+          const tokens = [];
+          const regex =
+            /(<style\b[^>]*>)([\s\S]*?)(<\/style>)|(<script\b[^>]*>)([\s\S]*?)(<\/script>)|([^<]+)|(<[^>]+>)/gi;
+          let match;
+          while ((match = regex.exec(code)) !== null) {
+            if (match[1]) {
+              // <style> tag
+              tokens.push({ type: "tag", content: match[1] });
+              tokens.push({ type: "css", content: match[2] });
+              tokens.push({ type: "tag", content: match[3] });
+            } else if (match[4]) {
+              // <script> tag
+              tokens.push({ type: "tag", content: match[4] });
+              tokens.push({ type: "js", content: match[5] });
+              tokens.push({ type: "tag", content: match[6] });
+            } else if (match[7]) {
+              // Text content
+              tokens.push({ type: "html", content: match[7] });
+            } else if (match[8]) {
+              // Other HTML tags
+              tokens.push({ type: "tag", content: match[8] });
+            }
+          }
+          return tokens;
+        }
+
+        function formatLanguage(code, language) {
+          switch (language) {
+            case "html":
+              return html_beautify(code, options);
+            case "css":
+              return css_beautify(code, options);
+            case "js":
+              return js_beautify(code, options);
+            default:
+              return code;
+          }
+        }
+
+        const tokens = tokenize(code);
+        let formattedCode = "";
+
+        tokens.forEach((token) => {
+          if (token.type === "tag" || token.type === "html") {
+            formattedCode += token.content;
+          } else {
+            formattedCode += formatLanguage(token.content, token.type);
+          }
+        });
+
+        try {
+          formattedCode = prettier.format(formattedCode, {
+            parser: "html",
+            plugins: prettierPlugins,
+            printWidth: 80,
+            tabWidth: 2,
+            useTabs: false,
+            semi: true,
+            singleQuote: false,
+            trailingComma: "es5",
+            bracketSpacing: true,
+            jsxBracketSameLine: false,
+            arrowParens: "avoid",
+            htmlWhitespaceSensitivity: "css",
+          });
+        } catch (error) {
+          console.error("Prettier formatting failed:", error);
+          // If Prettier fails, return the code formatted without Prettier
+        }
+        return formattedCode;
+      }
+
+      function isValidJSON(str) {
+        try {
+          JSON.parse(str);
+          return true;
+        } catch (e) {
+          return false;
+        }
+      }
+      function formatJSON(jsonString) {
+        try {
+          const obj = JSON.parse(jsonString);
+          return JSON.stringify(obj, null, 2); // 2 spaces indent
+        } catch (e) {
+          console.error("JSON parsing failed:", e);
+          return jsonString; // Return original string if parsing fails
+        }
+      }
+      function removeComments(code) {
+        var result = "";
+        var inString = false;
+        var stringChar = "";
+        var inSingleLineComment = false;
+        var inMultiLineComment = false;
+        var inHtmlComment = false;
+        var inStyle = false;
+        var inScript = false;
+        var escaped = false;
+        var buffer = "";
+
+        for (var i = 0; i < code.length; i++) {
+          if (inString) {
+            result += code[i];
+            if (escaped) {
+              escaped = false;
+            } else if (code[i] === "\\") {
+              escaped = true;
+            } else if (code[i] === stringChar) {
+              inString = false;
+            }
+          } else if (inSingleLineComment) {
+            if (code[i] === "\n") {
+              inSingleLineComment = false;
+              result += "\n";
+            }
+          } else if (inMultiLineComment) {
+            if (code[i] === "*" && code[i + 1] === "/") {
+              inMultiLineComment = false;
+              i++;
+            }
+          } else if (inHtmlComment) {
+            if (code[i] === "-" && code[i + 1] === "-" && code[i + 2] === ">") {
+              inHtmlComment = false;
+              i += 2;
+            }
+          } else {
+            if (code[i] === "<") {
+              buffer = code[i];
+              while (i + 1 < code.length && code[i + 1] !== ">") {
+                i++;
+                buffer += code[i];
+              }
+              if (i + 1 < code.length) {
+                buffer += code[i + 1];
+                i++;
+              }
+
+              var lowerBuffer = buffer.toLowerCase();
+              if (lowerBuffer === "<style>") {
+                inStyle = true;
+              } else if (lowerBuffer === "<\/style>") {
+                inStyle = false;
+              } else if (lowerBuffer === "<script>") {
+                inScript = true;
+              } else if (lowerBuffer === "<\/script>") {
+                inScript = false;
+              }
+
+              result += buffer;
+            } else if (code[i] === '"' || code[i] === "'" || code[i] === "`") {
+              inString = true;
+              stringChar = code[i];
+              result += code[i];
+            } else if (
+              code[i] === "/" &&
+              code[i + 1] === "/" &&
+              (inScript || inStyle)
+            ) {
+              inSingleLineComment = true;
+              i++;
+            } else if (
+              code[i] === "/" &&
+              code[i + 1] === "*" &&
+              (inScript || inStyle)
+            ) {
+              inMultiLineComment = true;
+              i++;
+            } else if (
+              code[i] === "<" &&
+              code[i + 1] === "!" &&
+              code[i + 2] === "-" &&
+              code[i + 3] === "-"
+            ) {
+              inHtmlComment = true;
+              i += 3;
+            } else {
+              result += code[i];
+            }
+          }
+        }
+
+        return result;
+      }
+
+      function removeEmptyLines(code) {
+        return code.replace(/^\s*[\r\n]/gm, "");
+      }
+
+      function removeLineBreaks(code) {
+        // Regex to match string literals (single quotes, double quotes, and backticks)
+        const stringLiteralPattern = /(['"`])(?:(?=(\\?))\2.)*?\1/g;
+
+        // Temporarily replace string literals with placeholders
+        let strings = [];
+        let tempCode = code.replace(stringLiteralPattern, function (match) {
+          strings.push(match);
+          return `__STRING_LITERAL_${strings.length - 1}__`;
+        });
+
+        // Convert single-line comments to multi-line comments
+        let convertedCode = tempCode.replace(
+          /\/\/(.*)(?=\n|\r|$)/g,
+          function (match, p1) {
+            return "/*" + p1.trim() + "*/";
+          }
+        );
+
+        // Remove line breaks, preserving spaces between tokens
+        convertedCode = convertedCode.replace(/\s*[\r\n]\s*/g, " ");
+
+        // Restore string literals
+        convertedCode = convertedCode.replace(
+          /__STRING_LITERAL_(\d+)__/g,
+          function (match, p1) {
+            return strings[p1];
+          }
+        );
+
+        return convertedCode;
+      }
+
+      function copyToClipboard() {
+        const resultText = document.getElementById("result");
+        resultText.select();
+        document.execCommand("copy");
+      }
+
+      function copyToOriginal() {
+        const resultText = document.getElementById("result").value;
+        document.getElementById("originalCode").value = resultText;
+        alert("Result copied to Original Code!");
+      }
+
+      function clearTextarea(id) {
+        document.getElementById(id).value = "";
+      }
+    </script>
+  </body>
+</html>

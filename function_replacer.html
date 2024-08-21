@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Advanced Code Function Replacer</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+      textarea {
+        width: 100%;
+        height: 200px;
+        margin-bottom: 10px;
+      }
+      button {
+        padding: 10px 20px;
+        font-size: 16px;
+        margin-right: 10px;
+        margin-bottom: 10px;
+      }
+      #functionOptions {
+        display: none;
+        margin-top: 20px;
+      }
+      #functionOptions button {
+        display: block;
+        margin-bottom: 10px;
+        .tab {
+          overflow: hidden;
+          border: 1px solid #ccc;
+          background-color: #f1f1f1;
+          margin-bottom: 20px;
+        }
+        .tab button {
+          background-color: inherit;
+          float: left;
+          border: none;
+          outline: none;
+          cursor: pointer;
+          padding: 14px 16px;
+          transition: 0.3s;
+        }
+        .tab button:hover {
+          background-color: #ddd;
+        }
+        .tab button.active {
+          background-color: #ccc;
+        }
+      }
+    </style>
+    <!-- Include Acorn parser and walk module -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/acorn/8.7.1/acorn.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/acorn-walk/8.2.0/walk.min.js"></script>
+  </head>
+  <body>
+    <div class="tab">
+      <button class="tablinks" onclick="location.href='code_formatter.html'">
+        Code Formatter
+      </button>
+      <button
+        class="tablinks active"
+        onclick="location.href='function_replacer.html'"
+      >
+        Function Replacer
+      </button>
+      <button class="tablinks" onclick="location.href='text_comparison.html'">
+        Text Comparison
+      </button>
+    </div>
+    <h1>Advanced Code Function Replacer</h1>
+
+    <h2>Original Code</h2>
+    <textarea
+      id="originalCode"
+      placeholder="Paste your original code here..."
+    ></textarea>
+    <button onclick="clearTextarea('originalCode')">Clear</button>
+
+    <h2>New Function</h2>
+    <textarea
+      id="newFunction"
+      placeholder="Paste your new function here..."
+    ></textarea>
+    <button onclick="clearTextarea('newFunction')">Clear</button>
+
+    <button onclick="replaceFunction()">Replace Function</button>
+
+    <div id="functionOptions"></div>
+
+    <h2>Result</h2>
+    <textarea id="result" readonly></textarea>
+    <button onclick="copyToClipboard()">Copy to Clipboard</button>
+    <button onclick="copyToOriginal()">Copy to Original</button>
+    <button onclick="clearTextarea('result')">Clear</button>
+
+    <script>
+      function replaceFunction() {
+        const originalCode = document.getElementById("originalCode").value;
+        const newFunctions = document.getElementById("newFunction").value;
+
+        try {
+          // Parse the original code
+          const ast = acorn.parse(originalCode, { ecmaVersion: 2020 });
+
+          // Parse the new functions
+          const newFunctionsAst = acorn.parse(newFunctions, {
+            ecmaVersion: 2020,
+          });
+
+          // Extract all function declarations, expressions, and methods from newFunctionsAst
+          const newFunctionNodes = newFunctionsAst.body.filter(
+            (node) =>
+              node.type === "FunctionDeclaration" ||
+              (node.type === "VariableDeclaration" &&
+                node.declarations[0].init &&
+                (node.declarations[0].init.type === "FunctionExpression" ||
+                  node.declarations[0].init.type ===
+                    "ArrowFunctionExpression")) ||
+              (node.type === "ExpressionStatement" &&
+                node.expression.type === "AssignmentExpression" &&
+                (node.expression.right.type === "FunctionExpression" ||
+                  node.expression.right.type === "ArrowFunctionExpression"))
+          );
+
+          if (newFunctionNodes.length === 0) {
+            throw new Error(
+              "No valid functions found in the new function(s) box"
+            );
+          }
+
+          let updatedCode = originalCode;
+          let replacements = [];
+
+          function processNextFunction(index) {
+            if (index >= newFunctionNodes.length) {
+              applyReplacements();
+              return;
+            }
+
+            const newFunctionNode = newFunctionNodes[index];
+            const newFunctionName = getFunctionName(newFunctionNode);
+            const newFunctionCode = newFunctions.slice(
+              newFunctionNode.start,
+              newFunctionNode.end
+            );
+
+            // Find all matching functions in the original AST
+            const matchingFunctions = findMatchingFunctions(
+              ast,
+              newFunctionName
+            );
+
+            if (matchingFunctions.length === 0) {
+              showAddNewFunctionOption(
+                newFunctionNode,
+                newFunctionCode,
+                (addNew) => {
+                  if (addNew) {
+                    replacements.push({
+                      func: null,
+                      newCode: newFunctionCode,
+                      addNew: true,
+                    });
+                  }
+                  processNextFunction(index + 1);
+                }
+              );
+            } else if (matchingFunctions.length === 1) {
+              if (functionsMatch(matchingFunctions[0], newFunctionNode)) {
+                // If functions match exactly, replace without asking
+                replacements.push({
+                  func: matchingFunctions[0],
+                  newCode: newFunctionCode,
+                });
+                processNextFunction(index + 1);
+              } else {
+                showReplacementOptions(
+                  matchingFunctions[0],
+                  newFunctionNode,
+                  newFunctionCode,
+                  (action) => {
+                    if (action === "replace") {
+                      replacements.push({
+                        func: matchingFunctions[0],
+                        newCode: newFunctionCode,
+                      });
+                    } else if (action === "addNew") {
+                      replacements.push({
+                        func: null,
+                        newCode: newFunctionCode,
+                        addNew: true,
+                      });
+                    }
+                    processNextFunction(index + 1);
+                  }
+                );
+              }
+            } else {
+              showFunctionOptions(
+                matchingFunctions,
+                newFunctionNode,
+                newFunctionCode,
+                (selectedFunc) => {
+                  if (selectedFunc) {
+                    if (functionsMatch(selectedFunc, newFunctionNode)) {
+                      // If functions match exactly, replace without asking
+                      replacements.push({
+                        func: selectedFunc,
+                        newCode: newFunctionCode,
+                      });
+                      processNextFunction(index + 1);
+                    } else {
+                      showReplacementOptions(
+                        selectedFunc,
+                        newFunctionNode,
+                        newFunctionCode,
+                        (action) => {
+                          if (action === "replace") {
+                            replacements.push({
+                              func: selectedFunc,
+                              newCode: newFunctionCode,
+                            });
+                          } else if (action === "addNew") {
+                            replacements.push({
+                              func: null,
+                              newCode: newFunctionCode,
+                              addNew: true,
+                            });
+                          }
+                          processNextFunction(index + 1);
+                        }
+                      );
+                    }
+                  } else {
+                    processNextFunction(index + 1);
+                  }
+                }
+              );
+            }
+          }
+          function showAddNewFunctionOption(newFunc, newCode, callback) {
+            const optionsDiv = document.getElementById("functionOptions");
+            optionsDiv.innerHTML = `<h3>Function "${getFunctionName(
+              newFunc
+            )}" not found in original code</h3>`;
+
+            const newSignature = getFunctionSignature(newFunc);
+            optionsDiv.innerHTML += `<p>New: ${newSignature}</p>`;
+
+            const addNewButton = document.createElement("button");
+            addNewButton.textContent = "Add as new function";
+            addNewButton.onclick = () => {
+              optionsDiv.style.display = "none";
+              callback(true);
+            };
+            optionsDiv.appendChild(addNewButton);
+
+            const skipButton = document.createElement("button");
+            skipButton.textContent = "Skip";
+            skipButton.onclick = () => {
+              optionsDiv.style.display = "none";
+              callback(false);
+            };
+            optionsDiv.appendChild(skipButton);
+
+            optionsDiv.style.display = "block";
+          }
+          function showReplacementOptions(oldFunc, newFunc, newCode, callback) {
+            const optionsDiv = document.getElementById("functionOptions");
+            optionsDiv.innerHTML = `<h3>Replace function "${getFunctionName(
+              oldFunc
+            )}"?</h3>`;
+
+            const oldSignature = getFunctionSignature(oldFunc);
+            const newSignature = getFunctionSignature(newFunc);
+
+            optionsDiv.innerHTML += `<p>Old: ${oldSignature}</p>`;
+            optionsDiv.innerHTML += `<p>New: ${newSignature}</p>`;
+
+            const replaceButton = document.createElement("button");
+            replaceButton.textContent = "Replace";
+            replaceButton.onclick = () => {
+              optionsDiv.style.display = "none";
+              callback("replace");
+            };
+            optionsDiv.appendChild(replaceButton);
+
+            const addNewButton = document.createElement("button");
+            addNewButton.textContent = "Add as new function";
+            addNewButton.onclick = () => {
+              optionsDiv.style.display = "none";
+              callback("addNew");
+            };
+            optionsDiv.appendChild(addNewButton);
+
+            const skipButton = document.createElement("button");
+            skipButton.textContent = "Skip";
+            skipButton.onclick = () => {
+              optionsDiv.style.display = "none";
+              callback("skip");
+            };
+            optionsDiv.appendChild(skipButton);
+
+            optionsDiv.style.display = "block";
+          }
+
+          function applyReplacements() {
+            // Sort replacements in reverse order of their appearance in the original code
+            replacements.sort(
+              (a, b) =>
+                (b.func ? b.func.start : Infinity) -
+                (a.func ? a.func.start : Infinity)
+            );
+
+            // Apply replacements
+            for (const replacement of replacements) {
+              if (replacement.addNew) {
+                updatedCode += "\n\n" + replacement.newCode;
+              } else {
+                updatedCode =
+                  updatedCode.slice(0, replacement.func.start) +
+                  replacement.newCode +
+                  updatedCode.slice(replacement.func.end);
+              }
+            }
+
+            document.getElementById("result").value = updatedCode;
+            alert("Function(s) replaced successfully!");
+          }
+
+          processNextFunction(0);
+        } catch (error) {
+          if (error instanceof SyntaxError) {
+            alert(
+              "Syntax Error: " +
+                error.message +
+                "\nLine: " +
+                error.loc.line +
+                ", Column: " +
+                error.loc.column
+            );
+          } else {
+            alert("Error: " + error.message);
+          }
+        }
+      }
+      function getFunctionName(node) {
+        if (node.type === "FunctionDeclaration") {
+          return node.id.name;
+        } else if (node.type === "VariableDeclaration") {
+          return node.declarations[0].id.name;
+        } else if (node.type === "ExpressionStatement") {
+          return node.expression.left.property.name;
+        }
+        throw new Error("Unsupported function type");
+      }
+
+      function findMatchingFunctions(ast, functionName) {
+        const matchingFunctions = [];
+        acorn.walk.simple(ast, {
+          FunctionDeclaration(node) {
+            if (node.id.name === functionName) {
+              matchingFunctions.push(node);
+            }
+          },
+          VariableDeclarator(node) {
+            if (
+              node.id.name === functionName &&
+              node.init &&
+              (node.init.type === "FunctionExpression" ||
+                node.init.type === "ArrowFunctionExpression")
+            ) {
+              matchingFunctions.push(node);
+            }
+          },
+          Property(node) {
+            if (
+              node.key.name === functionName &&
+              (node.value.type === "FunctionExpression" ||
+                node.value.type === "ArrowFunctionExpression")
+            ) {
+              matchingFunctions.push(node);
+            }
+          },
+          MethodDefinition(node) {
+            if (node.key.name === functionName) {
+              matchingFunctions.push(node);
+            }
+          },
+          AssignmentExpression(node) {
+            if (
+              node.left.type === "MemberExpression" &&
+              node.left.property.name === functionName &&
+              (node.right.type === "FunctionExpression" ||
+                node.right.type === "ArrowFunctionExpression")
+            ) {
+              matchingFunctions.push(node);
+            }
+          },
+        });
+        return matchingFunctions;
+      }
+
+      function replaceSelectedFunction(
+        selectedFunction,
+        newFunctionCode,
+        offset
+      ) {
+        const originalCode = document.getElementById("originalCode").value;
+        const updatedCode =
+          originalCode.slice(0, selectedFunction.start + offset) +
+          newFunctionCode +
+          originalCode.slice(selectedFunction.end + offset);
+        const newOffset =
+          offset +
+          (newFunctionCode.length -
+            (selectedFunction.end - selectedFunction.start));
+        return { updatedCode, offset: newOffset };
+      }
+      function confirmReplacement(oldFunc, newFunc, newCode, callback) {
+        if (functionsMatch(oldFunc, newFunc)) {
+          callback(true);
+        } else {
+          const message =
+            `The function "${getFunctionName(
+              oldFunc
+            )}" has a different signature or syntax. Are you sure you want to replace it?\n\n` +
+            `Old: ${getFunctionSignature(oldFunc)}\n` +
+            `New: ${getFunctionSignature(newFunc)}`;
+          if (confirm(message)) {
+            callback(true);
+          } else {
+            callback(false);
+          }
+        }
+      }
+
+      function functionsMatch(oldFunc, newFunc) {
+        // Compare function signatures
+        const oldParams =
+          oldFunc.params || (oldFunc.value && oldFunc.value.params) || [];
+        const newParams =
+          newFunc.params || (newFunc.value && newFunc.value.params) || [];
+
+        if (oldParams.length !== newParams.length) {
+          return false;
+        }
+
+        // Compare parameter names
+        for (let i = 0; i < oldParams.length; i++) {
+          if (oldParams[i].name !== newParams[i].name) {
+            return false;
+          }
+        }
+
+        // Compare function types (e.g., arrow function vs regular function)
+        const oldType =
+          oldFunc.type === "FunctionDeclaration"
+            ? "function"
+            : oldFunc.value && oldFunc.value.type === "ArrowFunctionExpression"
+            ? "arrow"
+            : "other";
+        const newType =
+          newFunc.type === "FunctionDeclaration"
+            ? "function"
+            : newFunc.value && newFunc.value.type === "ArrowFunctionExpression"
+            ? "arrow"
+            : "other";
+
+        return oldType === newType;
+      }
+      function showFunctionOptions(functions, newFunc, newCode, callback) {
+        const optionsDiv = document.getElementById("functionOptions");
+        optionsDiv.innerHTML =
+          "<h3>Multiple matching functions found. Please select one to replace:</h3>";
+        functions.forEach((func, index) => {
+          const button = document.createElement("button");
+          button.textContent = `Option ${index + 1}: ${getFunctionSignature(
+            func
+          )}`;
+          button.onclick = () => {
+            optionsDiv.style.display = "none";
+            callback(func);
+          };
+          optionsDiv.appendChild(button);
+        });
+        const addNewButton = document.createElement("button");
+        addNewButton.textContent = "Add as new function";
+        addNewButton.onclick = () => {
+          optionsDiv.style.display = "none";
+          callback({ addNew: true });
+        };
+        optionsDiv.appendChild(addNewButton);
+        const skipButton = document.createElement("button");
+        skipButton.textContent = "Skip this function";
+        skipButton.onclick = () => {
+          optionsDiv.style.display = "none";
+          callback(null);
+        };
+        optionsDiv.appendChild(skipButton);
+        optionsDiv.style.display = "block";
+      }
+      function getFunctionSignature(node) {
+        let signature;
+        if (node.type === "FunctionDeclaration") {
+          signature = `function ${node.id.name}(${node.params
+            .map((p) => p.name)
+            .join(", ")}) { ... }`;
+        } else if (node.type === "VariableDeclarator") {
+          if (node.init.type === "ArrowFunctionExpression") {
+            const params = node.init.params.map((p) => p.name).join(", ");
+            signature = `const ${node.id.name} = (${params}) => { ... }`;
+          } else {
+            signature = `const ${node.id.name} = function(${node.init.params
+              .map((p) => p.name)
+              .join(", ")}) { ... }`;
+          }
+        } else if (node.type === "Property") {
+          if (node.method) {
+            signature = `${node.key.name}(${node.value.params
+              .map((p) => p.name)
+              .join(", ")}) { ... }`;
+          } else if (node.value.type === "ArrowFunctionExpression") {
+            const params = node.value.params.map((p) => p.name).join(", ");
+            signature = `${node.key.name}: (${params}) => { ... }`;
+          } else {
+            signature = `${node.key.name}: function(${node.value.params
+              .map((p) => p.name)
+              .join(", ")}) { ... }`;
+          }
+        } else if (node.type === "MethodDefinition") {
+          signature = `${node.key.name}(${node.value.params
+            .map((p) => p.name)
+            .join(", ")}) { ... }`;
+        }
+        return signature || "Unknown function type";
+      }
+
+      function copyToClipboard() {
+        const resultText = document.getElementById("result");
+        resultText.select();
+        document.execCommand("copy");
+      }
+
+      function copyToOriginal() {
+        const resultText = document.getElementById("result").value;
+        document.getElementById("originalCode").value = resultText;
+        alert("Result copied to Original Code!");
+      }
+
+      function clearTextarea(id) {
+        document.getElementById(id).value = "";
+      }
+    </script>
+  </body>
+</html>
