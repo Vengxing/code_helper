@@ -120,7 +120,7 @@
       function processCode() {
         let code = document.getElementById("originalCode").value;
         if (document.getElementById("removeComments").checked) {
-          code = removeComments(code);
+          code = removeAllComments(code);
         }
         if (document.getElementById("removeEmptyLines").checked) {
           code = removeEmptyLines(code);
@@ -255,100 +255,69 @@
           return jsonString; // Return original string if parsing fails
         }
       }
-      function removeComments(code) {
-        var result = "";
-        var inString = false;
-        var stringChar = "";
-        var inSingleLineComment = false;
-        var inMultiLineComment = false;
-        var inHtmlComment = false;
-        var inStyle = false;
-        var inScript = false;
-        var escaped = false;
-        var buffer = "";
+      function removeAllComments(code) {
+        try {
+          //code = code.replace(/<!--[\s\S]*?-->/g, '');
+          // Create a DOM parser
+          const parser = new DOMParser();
+          const doc = parser.parseFromString(code, "text/html");
 
-        for (var i = 0; i < code.length; i++) {
-          if (inString) {
-            result += code[i];
-            if (escaped) {
-              escaped = false;
-            } else if (code[i] === "\\") {
-              escaped = true;
-            } else if (code[i] === stringChar) {
-              inString = false;
+          // Function to remove HTML comments
+          const removeHtmlComments = (node) => {
+            const walker = document.createTreeWalker(
+              node,
+              NodeFilter.SHOW_COMMENT,
+              null,
+              false
+            );
+            let comment;
+            while ((comment = walker.nextNode())) {
+              comment.parentNode.removeChild(comment);
             }
-          } else if (inSingleLineComment) {
-            if (code[i] === "\n") {
-              inSingleLineComment = false;
-              result += "\n";
-            }
-          } else if (inMultiLineComment) {
-            if (code[i] === "*" && code[i + 1] === "/") {
-              inMultiLineComment = false;
-              i++;
-            }
-          } else if (inHtmlComment) {
-            if (code[i] === "-" && code[i + 1] === "-" && code[i + 2] === ">") {
-              inHtmlComment = false;
-              i += 2;
-            }
-          } else {
-            if (code[i] === "<") {
-              buffer = code[i];
-              while (i + 1 < code.length && code[i + 1] !== ">") {
-                i++;
-                buffer += code[i];
-              }
-              if (i + 1 < code.length) {
-                buffer += code[i + 1];
-                i++;
-              }
+          };
+          removeHtmlComments(doc);
 
-              var lowerBuffer = buffer.toLowerCase();
-              if (lowerBuffer === "<style>") {
-                inStyle = true;
-              } else if (lowerBuffer === "<\/style>") {
-                inStyle = false;
-              } else if (lowerBuffer === "<script>") {
-                inScript = true;
-              } else if (lowerBuffer === "<\/script>") {
-                inScript = false;
-              }
-
-              result += buffer;
-            } else if (code[i] === '"' || code[i] === "'" || code[i] === "`") {
-              inString = true;
-              stringChar = code[i];
-              result += code[i];
-            } else if (
-              code[i] === "/" &&
-              code[i + 1] === "/" &&
-              (inScript || inStyle)
-            ) {
-              inSingleLineComment = true;
-              i++;
-            } else if (
-              code[i] === "/" &&
-              code[i + 1] === "*" &&
-              (inScript || inStyle)
-            ) {
-              inMultiLineComment = true;
-              i++;
-            } else if (
-              code[i] === "<" &&
-              code[i + 1] === "!" &&
-              code[i + 2] === "-" &&
-              code[i + 3] === "-"
-            ) {
-              inHtmlComment = true;
-              i += 3;
-            } else {
-              result += code[i];
-            }
+          // Remove CSS comments
+          const styleElements = doc.getElementsByTagName("style");
+          for (let style of styleElements) {
+            style.textContent = style.textContent.replace(
+              /\/\*[\s\S]*?\*\//g,
+              ""
+            );
           }
-        }
 
-        return result;
+          // Remove JavaScript comments
+          const scriptElements = doc.getElementsByTagName("script");
+          for (let script of scriptElements) {
+            script.textContent = script.textContent
+              .replace(/\/\/.*$/gm, "") // Remove single-line comments
+              .replace(/\/\*[\s\S]*?\*\//g, ""); // Remove multi-line comments
+          }
+
+          // Serialize the document back to string
+          const serializer = new XMLSerializer();
+          let result = serializer.serializeToString(doc);
+
+          // Preserve original attribute formatting
+          result = result.replace(/\s+(?=[^<>]*\>)/g, (match) => {
+            return match.replace(/\n/g, "&#10;").replace(/\s/g, " ");
+          });
+
+          // Decode HTML entities, but preserve &#10; in code
+          result = result
+            .replace(/&lt;/g, "<")
+            .replace(/&gt;/g, ">")
+            .replace(/&amp;/g, "&");
+
+          // Only replace &#10; with newlines in attribute values
+          result = result.replace(/(\S+)="([^"]*)"/g, (match, attr, value) => {
+            return `${attr}="${value.replace(/&#10;/g, "\n")}"`;
+          });
+
+          return result;
+        } catch (error) {
+          return "Error processing code: " + error.message;
+        }
       }
 
       function removeEmptyLines(code) {
