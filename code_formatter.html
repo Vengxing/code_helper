@@ -50,6 +50,33 @@
         .tab button.active {
           background-color: #f9f9f9;
         }
+        .info-icon {
+          display: inline-block;
+          width: 16px;
+          height: 16px;
+          background-color: #007bff;
+          color: white;
+          border-radius: 50%;
+          text-align: center;
+          line-height: 16px;
+          font-size: 12px;
+          margin-left: 5px;
+          cursor: help;
+        }
+
+        .info-icon:hover::after {
+          content: attr(title);
+          position: absolute;
+          background: #333;
+          color: #fff;
+          padding: 5px 10px;
+          border-radius: 3px;
+          font-size: 12px;
+          white-space: nowrap;
+          z-index: 1;
+          margin-top: -30px;
+          margin-left: 10px;
+        }
       }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/js-beautify/1.15.1/beautify.min.js"></script>
@@ -59,6 +86,9 @@
     <script src="https://cdn.jsdelivr.net/npm/prettier@2.8.8/parser-html.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/prettier@2.8.8/parser-babel.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/prettier@2.8.8/parser-postcss.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/acorn/8.7.1/acorn.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jsdom/16.7.0/jsdom.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/css-tree/2.3.1/csstree.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/acorn/8.7.1/acorn.min.js"></script>
   </head>
   <body>
@@ -87,8 +117,7 @@
 
     <div class="checkbox-group">
       <label>
-        <input type="checkbox" id="removeComments" /> Remove all comments (does
-        not work with regex)
+        <input type="checkbox" id="removeComments" /> Remove all comments
       </label>
       <br />
       <label>
@@ -102,7 +131,11 @@
       <label>
         <br />
         <input type="checkbox" id="addProperLineBreaks" /> Format code/json
-        (remove comments first)
+        <span
+          class="info-icon"
+          title="The code formatter cannot handle minified code that already contains single-line comments."
+          >ⓘ</span
+        >
       </label>
     </div>
     <br />
@@ -117,8 +150,37 @@
     <button onclick="clearTextarea('result')">Clear</button>
 
     <script>
+      document.addEventListener("DOMContentLoaded", function () {
+        const infoIcon = document.querySelector(".info-icon");
+        const tooltip = document.createElement("div");
+        tooltip.className = "tooltip";
+        tooltip.style.display = "none";
+        tooltip.style.position = "absolute";
+        tooltip.style.background = "#333";
+        tooltip.style.color = "#fff";
+        tooltip.style.padding = "5px 10px";
+        tooltip.style.borderRadius = "3px";
+        tooltip.style.fontSize = "12px";
+        tooltip.style.zIndex = "1";
+        document.body.appendChild(tooltip);
+
+        infoIcon.addEventListener("mouseover", function (e) {
+          tooltip.textContent = this.getAttribute("title");
+          tooltip.style.display = "block";
+          tooltip.style.left = e.pageX + 10 + "px";
+          tooltip.style.top = e.pageY - 30 + "px";
+        });
+
+        infoIcon.addEventListener("mouseout", function () {
+          tooltip.style.display = "none";
+        });
+      });
       function processCode() {
         let code = document.getElementById("originalCode").value;
+
+        // Preserve special replacements
+        code = preserveSpecialReplacements(code);
+
         if (document.getElementById("removeComments").checked) {
           code = removeAllComments(code);
         }
@@ -135,7 +197,33 @@
             code = formatCombinedCode(code);
           }
         }
+
+        // Restore special replacements
+        code = restoreSpecialReplacements(code);
+
         document.getElementById("result").value = code;
+      }
+      function preserveSpecialReplacements(code) {
+        return code.replace(
+          /(value\.replace\()(\/.+?\/g,\s*("[^"]*"))/g,
+          (match, p1, p2) => {
+            return (
+              p1 +
+              "__PRESERVED_REGEX__" +
+              encodeURIComponent(p2) +
+              "__END_PRESERVED_REGEX__"
+            );
+          }
+        );
+      }
+
+      function restoreSpecialReplacements(code) {
+        return code.replace(
+          /__PRESERVED_REGEX__(.+?)__END_PRESERVED_REGEX__/g,
+          (match, p1) => {
+            return decodeURIComponent(p1);
+          }
+        );
       }
 
       function formatCombinedCode(code) {
@@ -255,44 +343,43 @@
           return jsonString; // Return original string if parsing fails
         }
       }
+
       function removeAllComments(code) {
         try {
-          //code = code.replace(/<!--[\s\S]*?-->/g, '');
           // Create a DOM parser
           const parser = new DOMParser();
           const doc = parser.parseFromString(code, "text/html");
 
-          // Function to remove HTML comments
-          const removeHtmlComments = (node) => {
-            const walker = document.createTreeWalker(
-              node,
-              NodeFilter.SHOW_COMMENT,
-              null,
-              false
-            );
-            let comment;
-            while ((comment = walker.nextNode())) {
-              comment.parentNode.removeChild(comment);
+          // Function to recursively process nodes
+          function processNode(node) {
+            if (node.nodeType === Node.ELEMENT_NODE) {
+              if (node.tagName === "STYLE") {
+                // Remove CSS comments
+                node.textContent = node.textContent.replace(
+                  /\/\*[\s\S]*?\*\//g,
+                  ""
+                );
+              } else if (node.tagName === "SCRIPT") {
+                // For script tags, only remove JavaScript comments
+                node.textContent = removeCommentsPreserveBackticks(
+                  node.textContent
+                );
+              } else {
+                // For other elements, remove HTML comments
+                for (let i = node.childNodes.length - 1; i >= 0; i--) {
+                  const child = node.childNodes[i];
+                  if (child.nodeType === Node.COMMENT_NODE) {
+                    node.removeChild(child);
+                  } else {
+                    processNode(child);
+                  }
+                }
+              }
             }
-          };
-          removeHtmlComments(doc);
-
-          // Remove CSS comments
-          const styleElements = doc.getElementsByTagName("style");
-          for (let style of styleElements) {
-            style.textContent = style.textContent.replace(
-              /\/\*[\s\S]*?\*\//g,
-              ""
-            );
           }
 
-          // Remove JavaScript comments
-          const scriptElements = doc.getElementsByTagName("script");
-          for (let script of scriptElements) {
-            script.textContent = script.textContent
-              .replace(/\/\/.*$/gm, "") // Remove single-line comments
-              .replace(/\/\*[\s\S]*?\*\//g, ""); // Remove multi-line comments
-          }
+          // Process the entire document
+          processNode(doc.documentElement);
 
           // Serialize the document back to string
           const serializer = new XMLSerializer();
@@ -316,8 +403,47 @@
 
           return result;
         } catch (error) {
-          return "Error processing code: " + error.message;
+          console.error("Error processing code:", error);
+          return code; // Return original code if there's an error
         }
+      }
+
+      function removeCommentsPreserveBackticks(code) {
+        const literals = [];
+        let cleanCode = code.replace(/`(?:\\`|[^`])*`/g, (match) => {
+          literals.push(match);
+          return `__TEMPLATE_LITERAL_${literals.length - 1}__`;
+        });
+
+        // Preserve regex patterns
+        const regexPatterns = [];
+        cleanCode = cleanCode.replace(
+          /\/(?![*+?])(?:[^\r\n\[/\\]|\\.|\[(?:[^\r\n\]\\]|\\.)*\])+\/(?:(?:g|m|s|i|y|u|d)*)/g,
+          (match) => {
+            regexPatterns.push(match);
+            return `__REGEX_PATTERN_${regexPatterns.length - 1}__`;
+          }
+        );
+
+        // Remove single-line comments
+        cleanCode = cleanCode.replace(/\/\/.*$/gm, "");
+
+        // Remove multi-line comments
+        cleanCode = cleanCode.replace(/\/\*[\s\S]*?\*\//g, "");
+
+        // Restore regex patterns
+        cleanCode = cleanCode.replace(
+          /__REGEX_PATTERN_(\d+)__/g,
+          (_, index) => regexPatterns[index]
+        );
+
+        // Restore template literals
+        cleanCode = cleanCode.replace(
+          /__TEMPLATE_LITERAL_(\d+)__/g,
+          (_, index) => literals[index]
+        );
+
+        return cleanCode;
       }
 
       function removeEmptyLines(code) {
